@@ -4,6 +4,17 @@ import requests
 app = Flask(__name__)
 
 # -------------------------
+# 🚫 Lista de dominios prohibidos
+# -------------------------
+DOMINIOS_PROHIBIDOS = [
+    "jstor.org", "sciencedirect.com", "springer.com",
+    "tandfonline.com", "wiley.com", "cambridge.org"
+]
+
+def url_prohibida(url):
+    return any(dominio in url for dominio in DOMINIOS_PROHIBIDOS)
+
+# -------------------------
 # 🔎 1. CrossRef API
 # -------------------------
 def buscar_crossref(query):
@@ -22,6 +33,9 @@ def buscar_crossref(query):
     revista = item.get("container-title", ["Revista no especificada"])[0]
     doi = item.get("DOI", "")
     url_final = f"https://doi.org/{doi}" if doi else "URL no disponible"
+
+    if url_prohibida(url_final):
+        return None
 
     return f"{autor} ({anio}). *{titulo}*. *{revista}*. {url_final}"
 
@@ -42,6 +56,9 @@ def buscar_semanticscholar(query):
     anio = paper.get("year", "s.f.")
     titulo = paper.get("title", "Sin título")
     url_final = paper.get("url", "URL no disponible")
+
+    if url_prohibida(url_final):
+        return None
 
     return f"{autor} ({anio}). *{titulo}*. Semantic Scholar. {url_final}"
 
@@ -65,6 +82,9 @@ def buscar_doaj(query):
     revista = record.get("journal", {}).get("title", "Revista no especificada")
     url_final = record.get("link", [{}])[0].get("url", "URL no disponible")
 
+    if url_prohibida(url_final):
+        return None
+
     return f"{autor} ({anio}). *{titulo}*. *{revista}*. {url_final}"
 
 # -------------------------
@@ -76,13 +96,12 @@ def buscar():
     if not q:
         return jsonify({"mensaje": "Falta el parámetro ?q="}), 400
 
-    # Buscar en orden de prioridad
     for fuente in [buscar_crossref, buscar_semanticscholar, buscar_doaj]:
         resultado = fuente(q)
         if resultado:
             return jsonify({"mensaje": resultado})
 
-    return jsonify({"mensaje": "No se encontraron fuentes académicas verificables para este tema."})
+    return jsonify({"mensaje": "No se encontraron fuentes académicas válidas (acceso abierto y dominio permitido). Intenta con otra búsqueda."})
 
 # -------------------------
 # 🏁 Ejecutar en local o deploy

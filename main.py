@@ -1,80 +1,23 @@
 from flask import Flask, request, jsonify
 import requests
-import xml.etree.ElementTree as ET
 
 app = Flask(__name__)
 
-# 🚫 Dominios que deben excluirse por restricción de acceso
+# -------------------------
+# 🚫 Lista de dominios prohibidos
+# -------------------------
 DOMINIOS_PROHIBIDOS = [
-    "jstor.org", "sciencedirect.com", "springer.com", "tandfonline.com",
-    "wiley.com", "cambridge.org", "ieee.org", "uptodate.com",
-    "scopus.com", "jurisdata.com"
+    "jstor.org", "sciencedirect.com", "springer.com",
+    "tandfonline.com", "wiley.com", "cambridge.org",
+    "ieee.org", "uptodate.com", "scopus.com", "jurisdata.com"
 ]
 
 def url_prohibida(url):
     return any(dominio in url for dominio in DOMINIOS_PROHIBIDOS)
 
-# 🔎 1. Semantic Scholar
-def buscar_semanticscholar(query):
-    url = f"https://api.semanticscholar.org/graph/v1/paper/search?query={query}&limit=1&fields=title,authors,year,url"
-    r = requests.get(url)
-    if r.status_code != 200:
-        return None
-    data = r.json().get("data", [])
-    if not data:
-        return None
-    paper = data[0]
-    autor = paper.get("authors", [{}])[0].get("name", "Autor desconocido")
-    anio = paper.get("year", "s.f.")
-    titulo = paper.get("title", "Sin título")
-    url_final = paper.get("url", "URL no disponible")
-
-    if not autor or not anio or not titulo or not url_final or url_prohibida(url_final):
-        return None
-
-    return {
-        "fuente": "Semantic Scholar",
-        "autor": autor,
-        "anio": anio,
-        "titulo": titulo,
-        "revista": "Semantic Scholar",
-        "url": url_final,
-        "referencia_formateada": f"{autor} ({anio}). *{titulo}*. Semantic Scholar. {url_final}"
-    }
-
-# 🔎 2. arXiv API
-def buscar_arxiv(query):
-    url = f"http://export.arxiv.org/api/query?search_query=all:{query}&start=0&max_results=1"
-    r = requests.get(url)
-    if r.status_code != 200:
-        return None
-    if "<entry>" not in r.text:
-        return None
-
-    root = ET.fromstring(r.text)
-    entry = root.find('{http://www.w3.org/2005/Atom}entry')
-    if entry is None:
-        return None
-
-    titulo = entry.find('{http://www.w3.org/2005/Atom}title').text.strip()
-    url_final = entry.find('{http://www.w3.org/2005/Atom}id').text.strip()
-    autor = entry.find('{http://www.w3.org/2005/Atom}author/{http://www.w3.org/2005/Atom}name').text.strip()
-    anio = entry.find('{http://www.w3.org/2005/Atom}published').text[:4]
-
-    if not autor or not anio or not titulo or not url_final or url_prohibida(url_final):
-        return None
-
-    return {
-        "fuente": "arXiv",
-        "autor": autor,
-        "anio": anio,
-        "titulo": titulo,
-        "revista": "arXiv",
-        "url": url_final,
-        "referencia_formateada": f"{autor} ({anio}). *{titulo}*. *arXiv*. {url_final}"
-    }
-
-# 🔎 3. CrossRef
+# -------------------------
+# 🔎 1. CrossRef API
+# -------------------------
 def buscar_crossref(query):
     url = f"https://api.crossref.org/works?query={query}&rows=1"
     r = requests.get(url)
@@ -83,6 +26,7 @@ def buscar_crossref(query):
     items = r.json().get("message", {}).get("items", [])
     if not items:
         return None
+
     item = items[0]
     autor = item.get("author", [{}])[0].get("family", "Autor desconocido")
     anio = item.get("issued", {}).get("date-parts", [[None]])[0][0]
@@ -91,20 +35,37 @@ def buscar_crossref(query):
     doi = item.get("DOI", "")
     url_final = f"https://doi.org/{doi}" if doi else "URL no disponible"
 
-    if not autor or not anio or not titulo or not url_final or url_prohibida(url_final):
+    if url_prohibida(url_final):
         return None
 
-    return {
-        "fuente": "CrossRef",
-        "autor": autor,
-        "anio": anio,
-        "titulo": titulo,
-        "revista": revista,
-        "url": url_final,
-        "referencia_formateada": f"{autor} ({anio}). *{titulo}*. *{revista}*. {url_final}"
-    }
+    return f"{autor} ({anio}). *{titulo}*. *{revista}*. {url_final}"
 
-# 🔎 4. DOAJ
+# -------------------------
+# 🧠 2. Semantic Scholar API
+# -------------------------
+def buscar_semanticscholar(query):
+    url = f"https://api.semanticscholar.org/graph/v1/paper/search?query={query}&limit=1&fields=title,authors,year,url"
+    r = requests.get(url)
+    if r.status_code != 200:
+        return None
+    data = r.json().get("data", [])
+    if not data:
+        return None
+
+    paper = data[0]
+    autor = paper.get("authors", [{}])[0].get("name", "Autor desconocido")
+    anio = paper.get("year", "s.f.")
+    titulo = paper.get("title", "Sin título")
+    url_final = paper.get("url", "URL no disponible")
+
+    if url_prohibida(url_final):
+        return None
+
+    return f"{autor} ({anio}). *{titulo}*. Semantic Scholar. {url_final}"
+
+# -------------------------
+# 🌍 3. DOAJ API
+# -------------------------
 def buscar_doaj(query):
     url = f"https://doaj.org/api/v2/search/articles/{query}?page=1&pageSize=1"
     headers = {"Accept": "application/json"}
@@ -114,6 +75,7 @@ def buscar_doaj(query):
     results = r.json().get("results", [])
     if not results:
         return None
+
     record = results[0].get("bibjson", {})
     autor = record.get("author", [{}])[0].get("name", "Autor desconocido")
     anio = record.get("year", "s.f.")
@@ -121,33 +83,55 @@ def buscar_doaj(query):
     revista = record.get("journal", {}).get("title", "Revista no especificada")
     url_final = record.get("link", [{}])[0].get("url", "URL no disponible")
 
-    if not autor or not anio or not titulo or not url_final or url_prohibida(url_final):
+    if url_prohibida(url_final):
         return None
 
-    return {
-        "fuente": "DOAJ",
-        "autor": autor,
-        "anio": anio,
-        "titulo": titulo,
-        "revista": revista,
-        "url": url_final,
-        "referencia_formateada": f"{autor} ({anio}). *{titulo}*. *{revista}*. {url_final}"
-    }
+    return f"{autor} ({anio}). *{titulo}*. *{revista}*. {url_final}"
 
-# 🚀 Endpoint principal
+# -------------------------
+# 🧩 Endpoint de búsqueda por tema
+# -------------------------
 @app.route("/buscar")
 def buscar():
     q = request.args.get("q")
     if not q:
-        return jsonify({"error": "Falta el parámetro ?q="}), 400
+        return jsonify({"mensaje": "Falta el parámetro ?q="}), 400
 
-    for fuente in [buscar_semanticscholar, buscar_arxiv, buscar_crossref, buscar_doaj]:
+    for fuente in [buscar_crossref, buscar_semanticscholar, buscar_doaj]:
         resultado = fuente(q)
         if resultado:
-            return jsonify(resultado)
+            return jsonify({"mensaje": resultado})
 
-    return jsonify({"mensaje": "No se encontraron fuentes académicas válidas (abiertas y con dominio permitido). Intenta otro término."})
+    return jsonify({"mensaje": "No se encontraron fuentes académicas válidas (acceso abierto y dominio permitido). Intenta con otra búsqueda."})
 
-# 🔧 Ejecutar local
+# -------------------------
+# 📂 Nuevo endpoint para carga de syllabus
+# -------------------------
+@app.route("/cargar-syllabus", methods=["POST"])
+def cargar_syllabus():
+    file = request.files.get("archivo")
+    if not file:
+        return jsonify({"error": "Archivo no enviado"}), 400
+
+    contenido = file.read().decode("utf-8", errors="ignore")
+    lineas = [line.strip() for line in contenido.splitlines() if len(line.strip()) > 5]
+    temas = lineas[:5]  # Máximo 5 temas para evitar spam
+
+    referencias = []
+    for tema in temas:
+        for fuente in [buscar_crossref, buscar_semanticscholar, buscar_doaj]:
+            resultado = fuente(tema)
+            if resultado:
+                referencias.append({"tema": tema, "referencia": resultado})
+                break
+
+    if not referencias:
+        return jsonify({"mensaje": "No se encontraron referencias válidas en el archivo."}), 404
+
+    return jsonify({"referencias": referencias})
+
+# -------------------------
+# 🏁 Ejecutar en local o producción
+# -------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)

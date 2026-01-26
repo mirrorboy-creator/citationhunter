@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 import requests
+import os
 
 app = Flask(__name__)
 
@@ -20,9 +21,10 @@ def url_prohibida(url):
 # -------------------------
 def buscar_crossref(query):
     url = f"https://api.crossref.org/works?query={query}&rows=1"
-    r = requests.get(url)
+    r = requests.get(url, timeout=10)
     if r.status_code != 200:
         return None
+
     items = r.json().get("message", {}).get("items", [])
     if not items:
         return None
@@ -44,10 +46,14 @@ def buscar_crossref(query):
 # 🧠 2. Semantic Scholar API
 # -------------------------
 def buscar_semanticscholar(query):
-    url = f"https://api.semanticscholar.org/graph/v1/paper/search?query={query}&limit=1&fields=title,authors,year,url"
-    r = requests.get(url)
+    url = (
+        "https://api.semanticscholar.org/graph/v1/paper/search"
+        f"?query={query}&limit=1&fields=title,authors,year,url"
+    )
+    r = requests.get(url, timeout=10)
     if r.status_code != 200:
         return None
+
     data = r.json().get("data", [])
     if not data:
         return None
@@ -69,9 +75,10 @@ def buscar_semanticscholar(query):
 def buscar_doaj(query):
     url = f"https://doaj.org/api/v2/search/articles/{query}?page=1&pageSize=1"
     headers = {"Accept": "application/json"}
-    r = requests.get(url, headers=headers)
+    r = requests.get(url, headers=headers, timeout=10)
     if r.status_code != 200:
         return None
+
     results = r.json().get("results", [])
     if not results:
         return None
@@ -91,21 +98,23 @@ def buscar_doaj(query):
 # -------------------------
 # 🧩 Endpoint de búsqueda por tema
 # -------------------------
-@app.route("/buscar")
+@app.route("/buscar", methods=["GET"])
 def buscar():
     q = request.args.get("q")
     if not q:
         return jsonify({"mensaje": "Falta el parámetro ?q="}), 400
 
-    for fuente in [buscar_crossref, buscar_semanticscholar, buscar_doaj]:
+    for fuente in (buscar_crossref, buscar_semanticscholar, buscar_doaj):
         resultado = fuente(q)
         if resultado:
             return jsonify({"mensaje": resultado})
 
-    return jsonify({"mensaje": "No se encontraron fuentes académicas válidas (acceso abierto y dominio permitido). Intenta con otra búsqueda."})
+    return jsonify({
+        "mensaje": "No se encontraron fuentes académicas válidas (acceso abierto y dominio permitido)."
+    }), 404
 
 # -------------------------
-# 📂 Nuevo endpoint para carga de syllabus
+# 📂 Endpoint para cargar syllabus
 # -------------------------
 @app.route("/cargar-syllabus", methods=["POST"])
 def cargar_syllabus():
@@ -114,15 +123,18 @@ def cargar_syllabus():
         return jsonify({"error": "Archivo no enviado"}), 400
 
     contenido = file.read().decode("utf-8", errors="ignore")
-    lineas = [line.strip() for line in contenido.splitlines() if len(line.strip()) > 5]
-    temas = lineas[:5]  # Máximo 5 temas para evitar spam
+    lineas = [l.strip() for l in contenido.splitlines() if len(l.strip()) > 5]
+    temas = lineas[:5]
 
     referencias = []
     for tema in temas:
-        for fuente in [buscar_crossref, buscar_semanticscholar, buscar_doaj]:
+        for fuente in (buscar_crossref, buscar_semanticscholar, buscar_doaj):
             resultado = fuente(tema)
             if resultado:
-                referencias.append({"tema": tema, "referencia": resultado})
+                referencias.append({
+                    "tema": tema,
+                    "referencia": resultado
+                })
                 break
 
     if not referencias:
@@ -131,7 +143,15 @@ def cargar_syllabus():
     return jsonify({"referencias": referencias})
 
 # -------------------------
-# 🏁 Ejecutar en local o producción
+# ❤️ Health check (Render)
+# -------------------------
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"ok": True})
+
+# -------------------------
+# 🏁 Run (Render compatible)
 # -------------------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)

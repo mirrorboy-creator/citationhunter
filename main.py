@@ -8,36 +8,86 @@ app = Flask(__name__)
 # CONFIGURACIÓN DE FUENTES OPEN ACCESS POR ÁREA
 # =====================================================
 FUENTES_PERMITIDAS = {
-    "Educación": [
-        "redalyc.org",
-        "scielo.org",
-        "dialnet.unirioja.es",
-        "clacso.org"
-    ],
     "Administración": [
         "redalyc.org",
-        "scielo.org",
+        "scielo.sa.cr",
         "dialnet.unirioja.es",
-        "clacso.org"
+        "biblioteca-repositorio.clacso.edu.ar"
+    ],
+    "Ciencias de la Información, Comunicación y Mercadeo": [
+        "doaj.org",
+        "redalyc.org",
+        "scielo.sa.cr",
+        "dialnet.unirioja.es",
+        "eprints.rclis.org"
+    ],
+    "Ciencias Médicas y de Salud": [
+        "pmc.ncbi.nlm.nih.gov",
+        "scielo.sa.cr",
+        "medrxiv.org",
+        "redalyc.org",
+        "iris.who.int"
+    ],
+    "Ciencias Naturales y Matemáticas": [
+        "scielo.sa.cr",
+        "redalyc.org",
+        "plos.org",
+        "arxiv.org",
+        "doabooks.org"
+    ],
+    "Ciencias Sociales y Humanas": [
+        "biblioteca-repositorio.clacso.edu.ar",
+        "redalyc.org",
+        "scielo.sa.cr",
+        "dialnet.unirioja.es",
+        "repositorio.cepal.org"
+    ],
+    "Derecho": [
+        "redalyc.org",
+        "scielo.sa.cr",
+        "dialnet.unirioja.es",
+        "repositorio.unam.mx",
+        "biblioteca-repositorio.clacso.edu.ar"
+    ],
+    "Economía, Finanzas y Ciencias Contables": [
+        "redalyc.org",
+        "scielo.sa.cr",
+        "dialnet.unirioja.es",
+        "repositorio.cepal.org",
+        "ideas.repec.org"
+    ],
+    "Educación": [
+        "redalyc.org",
+        "scielo.sa.cr",
+        "dialnet.unirioja.es",
+        "biblioteca-repositorio.clacso.edu.ar",
+        "explora-intelligo.info"
     ],
     "Ingeniería": [
-        "scielo.org",
         "redalyc.org",
+        "scielo.sa.cr",
         "arxiv.org",
+        "doaj.org",
+        "latindex.org"
+    ],
+    "Internet y Nuevas Tecnologías": [
+        "arxiv.org",
+        "doaj.org",
+        "hal.science",
+        "eprints.rclis.org"
+    ],
+    "Logística y Transporte": [
+        "redalyc.org",
+        "scielo.sa.cr",
+        "dialnet.unirioja.es",
         "doaj.org"
     ],
-    "Salud": [
-        "pmc.ncbi.nlm.nih.gov",
-        "scielo.org",
-        "medrxiv.org",
-        "redalyc.org"
-    ],
-    "Ciencias Sociales": [
-        "clacso.org",
+    "Transversales (Competencias blandas)": [
         "redalyc.org",
-        "scielo.org",
+        "scielo.sa.cr",
         "dialnet.unirioja.es",
-        "cepal.org"
+        "biblioteca-repositorio.clacso.edu.ar",
+        "sedici.unlp.edu.ar"
     ]
 }
 
@@ -70,36 +120,35 @@ def health():
 # =====================================================
 @app.route("/citations", methods=["POST"])
 def citations():
-    """
-    Entrada esperada:
-    {
-        "q": "aprendizaje significativo",
-        "area": "Educación"
-    }
-    """
 
     data = request.get_json(silent=True) or {}
+
     query = data.get("q")
-    area = data.get("area")
+    area = data.get("area") or "Ciencias Sociales y Humanas"
 
-    if not query or not area:
+    if not query:
         return jsonify({
             "ok": False,
-            "error": "Se requieren los campos 'q' y 'area'"
+            "error": "El campo 'q' es obligatorio"
         }), 400
 
-    dominios_validos = FUENTES_PERMITIDAS.get(area)
-    if not dominios_validos:
+    # Fallback de área si no existe
+    if area not in FUENTES_PERMITIDAS:
+        area = "Ciencias Sociales y Humanas"
+
+    dominios_validos = FUENTES_PERMITIDAS[area]
+
+    # -------------------------------------------------
+    # Crossref como índice académico abierto
+    # -------------------------------------------------
+    url = f"https://api.crossref.org/works?query={query}&rows=20"
+    try:
+        r = requests.get(url, timeout=20)
+    except Exception as e:
         return jsonify({
             "ok": False,
-            "error": f"Área no soportada: {area}"
-        }), 400
-
-    # -------------------------------------------------
-    # Usamos Crossref como ÍNDICE ABIERTO (no fuente)
-    # -------------------------------------------------
-    url = f"https://api.crossref.org/works?query={query}&rows=10"
-    r = requests.get(url, timeout=20)
+            "error": "Error de conexión con Crossref"
+        }), 502
 
     if r.status_code != 200:
         return jsonify({
@@ -115,13 +164,13 @@ def citations():
         if not link:
             continue
 
-        # Filtrar cerrados
+        # Bloquear dominios cerrados
         if dominio_prohibido(link):
             continue
 
-        # Filtrar por dominios open access permitidos
+        # Aceptar si está en permitidos o no está prohibido
         if not any(d in link for d in dominios_validos):
-            continue
+            pass  # se acepta igual si no es de pago
 
         autor = "Autor desconocido"
         if item.get("author"):
